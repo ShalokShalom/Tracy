@@ -1,0 +1,64 @@
+.
+├── build
+│   ├── dev
+│   │   └── erlang
+│   ├── gleam-dev-erlang.lock
+│   ├── gleam-dev-javascript.lock
+│   ├── gleam-lsp-erlang.lock
+│   ├── gleam-lsp-javascript.lock
+│   ├── gleam-prod-erlang.lock
+│   ├── gleam-prod-javascript.lock
+│   ├── lsp
+│   │   └── erlang
+│   └── packages
+│       ├── gleam_erlang
+│       ├── gleam.lock
+│       ├── gleam_otp
+│       ├── gleam_stdlib
+│       ├── gleeunit
+│       └── packages.toml
+├── cmd
+│   └── tracy
+│       └── main.go
+├── fixtures
+│   └── records
+│       └── records.go
+├── gleam.toml
+├── go.mod
+├── go.sum
+├── internal
+│   ├── analyze
+│   │   ├── analyzer.go
+│   │   └── gleam_analyzer.go
+│   ├── codegen
+│   └── ir
+│       └── types.go
+├── LICENSE
+├── manifest.toml
+├── README.md
+├── ROADMAP.md
+├── src
+│   ├── actors.gleam
+│   ├── concurrency.gleam
+│   ├── defer.gleam
+│   ├── interfaces.gleam
+│   ├── loops.gleam
+│   ├── manual.gleam
+│   ├── options.gleam
+│   ├── records.gleam
+│   ├── results.gleam
+│   └── tracy.gleam
+├── structure.txt
+└── test
+    ├── actors_test.gleam
+    ├── concurrency_test.gleam
+    ├── defer_test.gleam
+    ├── interfaces_test.gleam
+    ├── loops_test.gleam
+    ├── manual_test.gleam
+    ├── options_test.gleam
+    ├── records_test.gleam
+    ├── results_test.gleam
+    └── tracy_test.gleam
+
+21 directories, 41 files

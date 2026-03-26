@@ -20,7 +20,7 @@ This repository has two parts:
   for each phase. Green tests mean the phase is complete.
 
 The Go-side analysis code (SSA, points-to, code generator) lives in a
-separate `cmd/` directory — but only once all phases here are green.
+separate `cmd/` directory.
 
 ## Phases
 
@@ -28,12 +28,12 @@ separate `cmd/` directory — but only once all phases here are green.
 Go structs become custom types with a single variant. Pointer-receiver
 mutation becomes a pure function returning a record update.
 
-**Phase 2 — nil → Option(T)** (`option.gleam`) — automatic with analysis  
+**Phase 2 — nil → Option(T)** (`options.gleam`) — automatic with analysis  
 Every nullable Go type (`*T`, interface, slice, map, chan, func) becomes
 `Option(T)`. nil-checks become case expressions. Requires SSA + points-to
 analysis to identify which values can be nil.
 
-**Phase 3 — (val, err) → Result(T, E)** (`result.gleam`) — fully automatic  
+**Phase 3 — (val, err) → Result(T, E)** (`results.gleam`) — fully automatic  
 The semantically closest translation. Go's multi-return `(val, error)`
 maps directly to `Result(val, error)`. Error chains (`if err != nil {
 return err }`) become `use` expressions with `result.try`.
@@ -73,7 +73,7 @@ that requires a human.
 ## Quickstart
 
 ```bash
-gleam new go2gleam
+gleam new Tracy
 # copy files from application/ and doctests/
 gleam test
 ```
