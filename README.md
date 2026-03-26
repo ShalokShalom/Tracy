@@ -1,4 +1,4 @@
-# go2gleam
+# Tracy
 
 A transpiler from Go to Gleam — built in phases, verified by tests.
 
@@ -74,7 +74,7 @@ that requires a human.
 
 ```bash
 gleam new go2gleam
-# copy files from src/ and test/
+# copy files from application/ and doctests/
 gleam test
 ```
 
