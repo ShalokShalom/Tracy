@@ -1,0 +1,1 @@
+-record(console_logger, {prefix :: binary()}).

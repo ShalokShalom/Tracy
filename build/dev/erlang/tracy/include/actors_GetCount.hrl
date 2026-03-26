@@ -1,0 +1,1 @@
+-record(get_count, {reply_with :: fun((integer()) -> nil)}).

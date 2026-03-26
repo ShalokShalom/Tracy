@@ -1,0 +1,1 @@
+-record(triangle, {base :: float(), height :: float()}).

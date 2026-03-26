@@ -1,88 +1,61 @@
 import gleeunit/should
-import records.{
-  type Address, type Employee, type Person,
-  Address, Employee, Person,
-  birthday, get_name, make_person, move_to, rename,
+import records.{Config, Person, Point, birthday, move, with_debug, with_port}
+
+pub fn point_creation_test() {
+  let p = Point(x: 1.0, y: 2.0)
+  p.x |> should.equal(1.0)
+  p.y |> should.equal(2.0)
 }
 
-pub fn make_person_test() {
-  make_person("Alice", 30)
-  |> should.equal(Person(name: "Alice", age: 30))
+pub fn move_returns_new_record_test() {
+  let p = Point(x: 0.0, y: 0.0)
+  move(p, 3.0, 4.0) |> should.equal(Point(x: 3.0, y: 4.0))
 }
 
-pub fn get_name_test() {
-  Person(name: "Alice", age: 30)
-  |> get_name()
-  |> should.equal("Alice")
+pub fn move_does_not_mutate_original_test() {
+  let p = Point(x: 1.0, y: 1.0)
+  let _ = move(p, 5.0, 5.0)
+  p |> should.equal(Point(x: 1.0, y: 1.0))
 }
 
-pub fn birthday_test() {
-  Person(name: "Alice", age: 30)
-  |> birthday()
-  |> should.equal(Person(name: "Alice", age: 31))
+pub fn move_negative_delta_test() {
+  let p = Point(x: 10.0, y: 10.0)
+  move(p, -3.0, -4.0) |> should.equal(Point(x: 7.0, y: 6.0))
+}
+
+pub fn birthday_increments_age_test() {
+  let alice = Person(name: "Alice", age: 30)
+  birthday(alice) |> should.equal(Person(name: "Alice", age: 31))
 }
 
 pub fn birthday_preserves_name_test() {
-  Person(name: "Alice", age: 30)
-  |> birthday()
-  |> get_name()
-  |> should.equal("Alice")
+  let bob = Person(name: "Bob", age: 25)
+  birthday(bob).name |> should.equal("Bob")
 }
 
-pub fn rename_test() {
-  Person(name: "Alice", age: 30)
-  |> rename("Bob")
-  |> should.equal(Person(name: "Bob", age: 30))
+pub fn birthday_chained_test() {
+  Person(name: "Eve", age: 20)
+  |> birthday
+  |> birthday
+  |> birthday
+  |> should.equal(Person(name: "Eve", age: 23))
 }
 
-pub fn rename_preserves_age_test() {
-  Person(name: "Alice", age: 30)
-  |> rename("Bob")
-  |> fn(p) { p.age }
-  |> should.equal(30)
+pub fn config_with_debug_test() {
+  let c = Config(host: "localhost", port: 8080, debug: False)
+  with_debug(c)
+  |> should.equal(Config(host: "localhost", port: 8080, debug: True))
 }
 
-pub fn move_to_test() {
-  let emp =
-    Employee(
-      person: Person(name: "Alice", age: 30),
-      address: Address(city: "Vienna"),
-      id: 1,
-    )
-  emp
-  |> move_to("Graz")
-  |> fn(e) { e.address.city }
-  |> should.equal("Graz")
+pub fn config_with_port_test() {
+  let c = Config(host: "localhost", port: 8080, debug: False)
+  with_port(c, 9090)
+  |> should.equal(Config(host: "localhost", port: 9090, debug: False))
 }
 
-pub fn move_to_preserves_person_test() {
-  let emp =
-    Employee(
-      person: Person(name: "Alice", age: 30),
-      address: Address(city: "Vienna"),
-      id: 1,
-    )
-  emp
-  |> move_to("Graz")
-  |> fn(e) { e.person.name }
-  |> should.equal("Alice")
-}
-
-pub fn person_fields_test() {
-  let p: Person = Person(name: "Alice", age: 30)
-  p.age
-  |> should.equal(30)
-}
-
-pub fn address_fields_test() {
-  let a: Address = Address(city: "Vienna")
-  a.city
-  |> should.equal("Vienna")
-}
-
-pub fn employee_fields_test() {
-  let e: Employee =
-  Employee(person: Person(name: "Alice", age: 30), address: Address(city: "Vienna"), id: 42)
-  e.id
-  |> should.equal(42)
+pub fn config_update_preserves_other_fields_test() {
+  let c = Config(host: "example.com", port: 443, debug: True)
+  let updated = with_port(c, 80)
+  updated.host |> should.equal("example.com")
+  updated.debug |> should.equal(True)
 }

@@ -1,0 +1,1 @@
+-record(counter_state, {count :: integer()}).

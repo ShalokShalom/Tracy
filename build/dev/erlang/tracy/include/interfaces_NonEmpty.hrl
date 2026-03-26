@@ -1,0 +1,1 @@
+-record(non_empty, {value :: binary()}).

@@ -1,0 +1,1 @@
+-record(max_length, {value :: binary(), max :: integer()}).

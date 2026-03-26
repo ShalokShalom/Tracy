@@ -1,0 +1,1 @@
+-record(worker_state, {processed :: integer(), last_result :: binary()}).

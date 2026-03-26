@@ -1,0 +1,1 @@
+-record(config, {host :: binary(), port :: integer(), debug :: boolean()}).

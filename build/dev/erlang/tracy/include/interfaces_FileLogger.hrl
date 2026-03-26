@@ -1,0 +1,1 @@
+-record(file_logger, {path :: binary(), level :: binary()}).

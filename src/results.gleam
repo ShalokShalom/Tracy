@@ -1,45 +1,51 @@
-//// Phase 3 — Go (val, error) → Gleam Result(T, E)
-////
-//// Go's Multi-Return (val, error) entspricht Result(val, error) fast 1:1.
-//// "if err != nil { return err }"-Ketten werden zu use-Chains mit result.try.
-
+import gleam/int
 import gleam/result
 
-/// Go:
-///   func Divide(a, b float64) (float64, error) {
-///     if b == 0 { return 0, errors.New("division by zero") }
-///     return a / b, nil
-///   }
-pub fn divide(a: Float, b: Float) -> Result(Float, String) {
-  case b {
-    0.0 -> Error("division by zero")
-    _ -> Ok(a /. b)
+pub type AppError {
+  ParseError(String)
+  ValidationError(String)
+  NotFound(String)
+}
+
+pub fn parse_age(s: String) -> Result(Int, AppError) {
+  case int.parse(s) {
+    Ok(n) if n >= 0 && n <= 150 -> Ok(n)
+    Ok(n) -> Error(ValidationError("age out of range: " <> int.to_string(n)))
+    Error(_) -> Error(ParseError("invalid integer: " <> s))
   }
 }
 
-/// Go:
-///   a, err := stepOne(); if err != nil { return err }
-///   b, err := stepTwo(a); if err != nil { return err }
-///   return stepThree(b), nil
-///
-/// use flacht die Result-Kette auf — semantisch identisch zu Go's error chain.
-pub fn pipeline(input: Float) -> Result(Float, String) {
-  use a <- result.try(divide(10.0, input))
-  use b <- result.try(divide(10.0, a))
-  Ok(b +. 1.0)
+pub fn parse_positive(s: String) -> Result(Int, AppError) {
+  case int.parse(s) {
+    Ok(n) if n > 0 -> Ok(n)
+    Ok(_) -> Error(ValidationError("must be positive"))
+    Error(_) -> Error(ParseError("not a number: " <> s))
+  }
 }
 
-/// Go: fmt.Errorf("context: %w", err)
-pub fn with_context(
-  r: Result(Float, String),
-  ctx: String,
-) -> Result(Float, String) {
-  result.map_error(r, fn(e) { ctx <> ": " <> e })
+pub fn double_parse(s: String) -> Result(Int, AppError) {
+  use n <- result.try(parse_positive(s))
+  Ok(n * 2)
 }
 
-/// Go: val, _ := divide(10, 2)
-/// Ignorierter Fehler → result.unwrap mit explizitem Default.
-/// Der Transpiler emittiert einen Kommentar wenn _ den Fehler ignoriert.
-pub fn unwrap_or_zero(r: Result(Float, String)) -> Float {
-  result.unwrap(r, 0.0)
+pub fn parse_and_clamp(s: String, max: Int) -> Result(Int, AppError) {
+  use n <- result.try(parse_positive(s))
+  use _ <- result.try(case n <= max {
+    True -> Ok(Nil)
+    False -> Error(ValidationError("exceeds max: " <> int.to_string(max)))
+  })
+  Ok(n)
+}
+
+pub fn lookup_user(id: Int) -> Result(String, AppError) {
+  case id {
+    1 -> Ok("Alice")
+    2 -> Ok("Bob")
+    _ -> Error(NotFound("user not found: " <> int.to_string(id)))
+  }
+}
+
+pub fn greet_user(id: Int) -> Result(String, AppError) {
+  use name <- result.try(lookup_user(id))
+  Ok("Hello, " <> name <> "!")
 }

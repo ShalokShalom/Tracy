@@ -1,0 +1,1 @@
+-record(point, {x :: float(), y :: float()}).
