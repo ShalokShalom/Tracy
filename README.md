@@ -11,7 +11,7 @@ be translated automatically — if you know the right target patterns.
 
 This repository has two parts:
 
-- `src/go2gleam/` — The **pattern library**: documented Gleam target patterns,
+- `src/` — The **pattern library**: documented Gleam target patterns,
   one file per translation category. These files are the ground truth for the
   code generator. Whatever is written here is what the transpiler must produce.
 
@@ -82,10 +82,12 @@ gleam test
 
 ```toml
 [dependencies]
-gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+gleam_stdlib = ">= 0.34.0"
+gleam_otp = ">= 1.0.0"
+gleam_erlang = ">= 0.25.0" 
 
 [dev-dependencies]
-gleeunit = ">= 1.0.0 and < 2.0.0"
+gleeunit = ">= 1.9.0 and < 2.0.0"
 ```
 
 ## Why Gleam?

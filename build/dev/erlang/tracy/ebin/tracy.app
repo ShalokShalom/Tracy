@@ -5,7 +5,6 @@
                     gleam_stdlib,
                     gleeunit]},
     {description, ""},
-    {modules, [concurrency_test,
-               records_test]},
+    {modules, []},
     {registered, []}
 ]}.
