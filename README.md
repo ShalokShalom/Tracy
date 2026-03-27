@@ -1,6 +1,6 @@
 # Tracy
 
-### A transpiler from Go to Gleam — built in phases, verified by tests.
+### A transpiler from Go to Gleam — specifically focused on the Bubbletea ecosystem.
 
 Go and Gleam are semantically very different languages; **Go** is imperative, mutable, and nil-based. 
 **Gleam** is functional, immutable, and has no nil. 
@@ -21,53 +21,63 @@ The transpiler itself is written in Go, and the tests obviously in Gleam.
 
 - `cmd/` The Go-side analysis code, for SSA, points-to, code generator, etc., lives there.
 
-## Phases
+## Roadmap
 
 **Phase 1 — Primitive types & structs** (`records.gleam`) — fully automatic  
 Go structs become custom types with a single variant. Pointer-receiver
 mutation becomes a pure function returning a record update.
+
 
 **Phase 2 — nil → Option(T)** (`options.gleam`) — automatic with analysis  
 Every nullable Go type (`*T`, interface, slice, map, chan, func) becomes
 `Option(T)`. nil-checks become case expressions. Requires SSA + points-to
 analysis to identify which values can be nil.
 
+
 **Phase 3 — (val, err) → Result(T, E)** (`results.gleam`) — fully automatic  
 The semantically closest translation. Go's multi-return `(val, error)`
 maps directly to `Result(val, error)`. Error chains (`if err != nil {
 return err }`) become `use` expressions with `result.try`.
 
+
 **Phase 4 — Closed interfaces → variants** (`interfaces.gleam`) — automatic via callgraph  
 Interfaces with a known, finite set of implementations become custom types
 with one variant per implementation. Resolved via callgraph type analysis.
 
+
 **Phase 5 — for range → list.*** (`loops.gleam`) — fully automatic  
 Simple range loops over slices map cleanly to `list.map`, `list.filter`,
 and `list.fold`.
+
 
 **Phase 6 — Simple defer** (`defer.gleam`) — automatic for simple cases  
 Resource cleanup and mutex unlock patterns are translated by placing the
 deferred call at the end of the block. Complex defer (loops, value capture)
 requires manual work.
 
+
 **Phase 7 — Shared mutable state → Actor** (`actors.gleam`) — skeleton automatic  
 Mutex-protected structs become OTP actors. The transpiler generates the
 actor skeleton with correct message types; semantic correctness requires
 manual review.
+
 
 **Phase 8 — Goroutines + channels → OTP** (`concurrency.gleam`) — skeleton automatic  
 Channel types and message shapes are inferred from SSA. The transpiler
 generates a compilable actor skeleton. `select` on multiple channels and
 `context.Context` patterns require manual redesign.
 
+
 **Phase 9 — select, complex defer, panic/recover** (`manual.gleam`) — TODO markers only  
 These constructs have no direct Gleam equivalent. The transpiler emits
 compilable stubs with precise `// TODO(transpiler):` comments explaining
 what manual redesign is needed and which Gleam pattern to use.
 
+
 Phases 1–5 are fully automatic and cover roughly 65–70% of typical Go code.
 Phases 6–8 produce compilable Gleam skeletons. Phase 9 marks everything
 that requires a human.
+
 
 ## Quickstart
 
