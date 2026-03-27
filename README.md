@@ -1,81 +1,94 @@
 # Tracy
 
-### A transpiler from Go to Gleam — specifically focused on the Bubbletea ecosystem.
+### A transpiler from Go to Gleam
 
-Go and Gleam are semantically very different languages; **Go** is imperative, mutable, and nil-based. 
-**Gleam** is functional, immutable, and has no nil. 
+Go and Gleam are semantically very different languages - on the surface.  
 
-Despite this, a surprisingly large portion of Go code can be automatically translated into Gleam.
+**Go** is imperative, mutable, and nil-based, and **Gleam** is functional, immutable, and has no nil. *Right?*
 
-This repository tries to achieve that.😎😎
+**Simultaneously, both languages also have a lot in common:**  
+Simplicity, value-based error handling, enforced formatting, fast compilation, and a small standard library. 
 
-The transpiler itself is written in Go, and the tests obviously in Gleam.
+So, a surprisingly large portion of Go code can be automatically translated into Gleam.
+And this is what we are trying to do here. ;)
 
-- `src/` - The **pattern library**: documented Gleam target patterns,
-  one file per translation category. These files here act as the reality check for the compiler.
+The transpiler itself is written in Go, and the tests in Gleam, obviously. 
 
-- `test/` - The **acceptance tests**: explicit `_test` functions using
-  `should.equal`, one per pattern. `gleam test` is the acceptance criterion
-  for each phase. 
+We are trying to get compatibility with the BubbleTea ecosystem:  
 
-- `cmd/` - The Go **command-line tool**, including analysis code for SSA, and compiler lives there.
+Both because we love it, and secondly, since we believe that the Elm architecture is a great pattern for Gleam.  
+It will also enrich the Erlang ecosystem, and especially so our new implementation of the [Erlang VM (BEAM) in Ada.](https://codeberg.org/ShalokShalom/Linda)
+
+- `src/` - The **pattern library**:  
+   This one documents Gleam target patterns, one file per translation category.  
+   The compiler conforms to these files, which serve as the reality check for the project.  
+   Gleam standards force this directory to be called `src`, counterintuitively. 
+
+- `test/` - The **acceptance tests**:  
+  Consists of explicit `_test` functions using `should.equal`, again one per pattern.  
+  Run the tests with `gleam test`, which is the acceptance criterion for each phase. 
+
+- `cmd/` - The Go **command-line tool**:  
+  The actual compiler, including analysis code for SSA and similar code, lives there.  
+  I am still working on a proper command-line interface. Also thinking about a Bubble Tea TUI for it.
 
 ## Roadmap
 
 **Phase 1 — Primitive types & structs** (`records.gleam`)  
+
 Go structs become custom types with a single variant.  
 Pointer-receiver mutation becomes a pure function returning a record update.
-<br/><br/>
 
 **Phase 2 — nil → Option(T)** (`options.gleam`)  
+
 Every nullable Go type (`*T`, interface, slice, map, chan, func) becomes `Option(T)`.  
 Nil-checks become case expressions. Requires SSA + points-to analysis to identify which values can be nil.
-<br/><br/>
 
 **Phase 3 — (val, err) → Result(T, E)** (`results.gleam`)  
+
 The semantically closest translation. Go's multi-return `(val, error)` maps directly to `Result(val, error)`.  
 Error chains (`if err != nil {return err }`) become `use` expressions with `result.try`.
-<br/><br/>
 
 **Phase 4 — Closed interfaces → variants** (`interfaces.gleam`)  
+
 Interfaces with a known, finite set of implementations become custom types
 with one variant per implementation.  
 Resolved via callgraph type analysis.
-<br/><br/>
 
 **Phase 5 — for range → list.*** (`loops.gleam`)  
+
 Simple range loops over slices map cleanly to `list.map`, `list.filter`, and `list.fold`.
-<br/><br/>
 
 **Phase 6 — Simple defer** (`defer.gleam`)  
+
 Resource cleanup and mutex unlock patterns are translated by placing the deferred call at the end of the block.  
 Complex defer (loops, value capture) requires manual work.
-<br/><br/>
 
 **Phase 7 — Shared mutable state → Actor** (`actors.gleam`)  
+
 Mutex-protected structs become OTP actors. The transpiler generates the actor skeleton with correct message types.  
 Semantic correctness requires manual review. (Can eventually be made by Ada proofs.)
-<br/><br/>
 
 **Phase 8 — Goroutines + channels → OTP** (`concurrency.gleam`)  
+
 Channel types and message shapes are inferred from SSA.  
 The transpiler generates a compilable actor skeleton, with `select` on multiple channels and `context.Context` patterns asking for manual work.
-<br/><br/>
 
 **Phase 9 — select, complex defer, panic/recover** (`manual.gleam`)  
+
 These constructs have no direct Gleam equivalent.  
 The transpiler emits compilable stubs with precise comments, 
 explaining what manual redesign is needed and which Gleam pattern to use.  
 
 **Notes:**  
 ```
-Phases 1 to 5 are fully automatic and cover roughly 65–70% of typical Go code, and phase 6 solves simple constructs fully automatically.
+Phases 1 to 5 are automatic and cover roughly 65–70% of typical Go code. Phase 6 solves simple constructs fully automatically.
 
 From here on out, it is currently questionable how to automate everything.
 
-Complex cases of `defer`, and all the constructs of the phases 7 and 8, which produce compilable Gleam skeletons, and no working code.
+Complex cases of `defer`, and all the constructs of the phases 7 and 8 produce compilable Gleam skeletons, and no working code.
 
-Phase 9 marks everything that requires a human as a comment.  
+Phase 9 only marks everything that requires a human as a comment.  
 ```
 
 ## Quickstart
