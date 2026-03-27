@@ -4,12 +4,17 @@ A transpiler from Go to Gleam — built in phases, verified by tests.
 
 ## Idea
 
-Go and Gleam are both statically typed, but semantically very different.
-Go is imperative, mutable, and nil-based. Gleam is functional, immutable,
-and has no nil. Despite this, a surprisingly large portion of Go code can
-be translated automatically — if you know the right target patterns.
+Go and Gleam are semantically very different languages.
 
-This repository has two parts:
+Go is imperative, mutable, and nil-based. 
+Gleam is functional, immutable, and has no nil. 
+
+Despite this, a surprisingly large portion of Go code can
+be translated automatically to Gleam.
+
+This repository tries to achieve that. 
+
+The transpiler itself is written in Go, and the tests obviously in Gleam.
 
 - `src/` — The **pattern library**: documented Gleam target patterns,
   one file per translation category. These files are the ground truth for the
@@ -19,8 +24,7 @@ This repository has two parts:
   `should.equal`, one per pattern. `gleam test` is the acceptance criterion
   for each phase. Green tests mean the phase is complete.
 
-The Go-side analysis code (SSA, points-to, code generator) lives in a
-separate `cmd/` directory.
+   `cmd/` The Go-side analysis code, for SSA, points-to, code generator, etc lives there.
 
 ## Phases
 
@@ -74,7 +78,7 @@ that requires a human.
 
 ```bash
 gleam new Tracy
-# copy files from application/ and doctests/
+# copy files from src/ and test/
 gleam test
 ```
 
@@ -98,3 +102,9 @@ Among all BEAM languages, Gleam is the strongest migration target for Go:
 - Gleam's `Result(T, E)` mirrors Go's `(val, error)` almost exactly
 - Gleam's OTP actors are a clean equivalent for Go's goroutines and mutexes
 - Exhaustive pattern matching makes Go's panic-based assertions unnecessary
+
+## Larger Project
+
+This project is part of an effort to modernize and strengthen the Erlang ecosystem.
+Among the other projects is a Rust to Ada transpiler and a complete rewrite of Erlang's VM in Ada. 
+
