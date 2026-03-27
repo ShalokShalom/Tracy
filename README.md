@@ -1,18 +1,13 @@
 # Tracy
 
-A transpiler from Go to Gleam — built in phases, verified by tests.
+### A transpiler from Go to Gleam — built in phases, verified by tests.
 
-## Idea
+Go and Gleam are semantically very different languages; **Go** is imperative, mutable, and nil-based. 
+**Gleam** is functional, immutable, and has no nil. 
 
-Go and Gleam are semantically very different languages.
+Despite this, a surprisingly large portion of Go code can be automatically translated into Gleam.
 
-Go is imperative, mutable, and nil-based. 
-Gleam is functional, immutable, and has no nil. 
-
-Despite this, a surprisingly large portion of Go code can
-be translated automatically to Gleam.
-
-This repository tries to achieve that. 
+This repository tries to achieve that.😎😎
 
 The transpiler itself is written in Go, and the tests obviously in Gleam.
 
@@ -24,7 +19,7 @@ The transpiler itself is written in Go, and the tests obviously in Gleam.
   `should.equal`, one per pattern. `gleam test` is the acceptance criterion
   for each phase. Green tests mean the phase is complete.
 
-   `cmd/` The Go-side analysis code, for SSA, points-to, code generator, etc lives there.
+- `cmd/` The Go-side analysis code, for SSA, points-to, code generator, etc., lives there.
 
 ## Phases
 
