@@ -49,3 +49,19 @@ pub fn greet_user(id: Int) -> Result(String, AppError) {
   use name <- result.try(lookup_user(id))
   Ok("Hello, " <> name <> "!")
 }
+
+pub type Point {
+  Point(x: Float, y: Float)
+}
+
+pub type Person {
+  Person(name: String, age: Int)
+}
+
+pub fn move(self: Point, dx: Float, dy: Float) -> Point {
+  Point(x: self.x + dx, y: self.y + dy)
+}
+
+pub fn birthday(self: Person) -> Person {
+  Person(name: self.name, age: self.age + 1)
+}

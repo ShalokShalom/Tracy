@@ -1,6 +1,26 @@
 // Generated from Go records
 
-pub type User {
-  Name String
+pub type user {
+  user(name: String)
+}
+
+pub type user {
+  user(name: String)
+}
+
+pub type user {
+  user(name: String)
+}
+
+pub type user {
+  user(name: String)
+}
+
+pub type user {
+  user(name: String)
+}
+
+pub type user {
+  user(name: String)
 }
 
