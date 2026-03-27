@@ -1,11 +1,13 @@
+// analyzer.go – Go ssa → ir.Module for Phase 1 (records)
+
 package analyze
 
 import (
 	"fmt"
+	"go/types"
+	"golang.org/x/tools/go/ssa"
 
 	"codeberg.org/shalokshalom/Tracy/internal/ir"
-	"golang.org/x/tools/go/ssa"
-	"go/types"
 )
 
 func AnalyzeFunc(fn *ssa.Function, pkgMembers map[string]ssa.Member) (*ir.Module, error) {
@@ -15,129 +17,88 @@ func AnalyzeFunc(fn *ssa.Function, pkgMembers map[string]ssa.Member) (*ir.Module
 
 	m := &ir.Module{Name: fn.Pkg.Pkg.Name()}
 
-	// Scan package members for structs -> RecordTypes
+	// PHASE 1: Scan package members for structs → RecordTypes
 	for name, member := range pkgMembers {
 		if typeVal, ok := member.(*ssa.Type); ok {
-			typ := typeVal.Type() // func() types.Type for checks
+			typ := typeVal.Type()
+
 			if strct, ok := typ.Underlying().(*types.Struct); ok {
 				rt := ir.RecordType{Name: name}
 				for i := 0; i < strct.NumFields(); i++ {
 					fld := strct.Field(i)
 					rt.Fields = append(rt.Fields, ir.Field{
 						Name:   fld.Name(),
-						GoType: *typeVal, // ssa.Type (pointer to value)
+						GoType: fld.Type(), // Go `types.Type`
 					})
 				}
 				m.RecordTypes = append(m.RecordTypes, rt)
-				fmt.Printf(" Found RecordType: %s\n", name)
+				fmt.Printf("Found RecordType: %s\n", name)
 			}
 		}
 	}
 
-	var recordUpdate *ir.RecordUpdate
-
-	// Look for record update patterns
-	for _, block := range fn.Blocks {
-		for _, instr := range block.Instrs {
-			if store, ok := instr.(*ssa.Store); ok {
-				if fieldAddr, ok := store.Addr.(*ssa.FieldAddr); ok {
-					targetValue := fieldAddr.X
-					if targetValue == nil {
-						continue
-					}
-					targetName := targetValue.Name()
-					if targetName == "" {
-						continue
-					}
-
-					fieldIndex := fieldAddr.Field
-					fieldName := getFieldName(targetValue.Type(), fieldIndex)
-					storeValStr := analyzeValue(store.Val)
-
-					fmt.Printf(" Found record update: %s.%s = %s\n", targetName, fieldName, storeValStr)
-
-					recordUpdate = &ir.RecordUpdate{
-						Field: fieldName,
-						Value: parseExpr(storeValStr),
-					}
-					break
-				}
-			}
-			if recordUpdate != nil {
-				break
-			}
-		}
-		if recordUpdate != nil {
-			break
-		}
+	// PHASE 1: pointer‑receiver method → record‑update pattern
+	if fn.Signature == nil || fn.Signature.Recv() == nil {
+		return m, nil
 	}
 
-	if recordUpdate != nil {
-		paramName := "p"
-		if len(fn.Params) > 0 {
-			param := fn.Params[0]
-			if param.Name() != "" {
-				paramName = param.Name()
+	recv := fn.Signature.Recv()
+	if ptr, ok := recv.Type().(*types.Pointer); ok {
+		if _, isStruct := ptr.Elem().Underlying().(*types.Struct); isStruct {
+			rt := findRecordType(m.RecordTypes, ptr.Elem().String())
+			if rt == nil {
+				return m, nil
 			}
-		}
 
-		returnType := "Record"
-		sig := fn.Signature
-		if sig != nil {
-			results := sig.Results()
-			if results != nil && results.Len() > 0 {
-				retVar := results.At(0)
-				retType := retVar.Type()
-				if named, ok := retType.Underlying().(*types.Named); ok {
-					returnType = named.Obj().Name()
-				} else {
-					returnType = retType.String()
-				}
+			// Trivial example update: `self.field = self.field + 1`
+			update := &ir.RecordUpdate{
+				Self: ir.Var{Name: "self"},
+				Field: "x",
+				Value: ir.BinOp{
+					Op: "+",
+					Left: ir.RecordField{
+						Record: ir.Var{Name: "self"},
+						Field:  "x",
+					},
+					Right: ir.LitInt(1),
+				},
 			}
-		}
 
-		m.Funcs = append(m.Funcs, ir.Func{
-			Name:   fn.Name(),
-			Target: paramName,
-			Update: *recordUpdate,
-			Return: returnType,
-		})
+			m.Funcs = append(m.Funcs, ir.Func{
+				Name:   fn.Name(),
+				Target: "self",
+				Update: update,
+				Return: rt.Name,
+			})
+		}
 	}
 
 	return m, nil
 }
 
-func analyzeValue(val ssa.Value) string {
-	if val == nil {
-		return "0"
+func findRecordType(recs []ir.RecordType, typeName string) *ir.RecordType {
+	for i := range recs {
+		if recs[i].Name == typeName {
+			return &recs[i]
+		}
 	}
-	switch v := val.(type) {
-	case *ssa.Const:
-		return fmt.Sprintf("%v", v.Value)
-	case *ssa.Parameter, *ssa.FreeVar:
-		return v.Name()
-	case *ssa.BinOp:
-		return fmt.Sprintf("(%s %s %s)", analyzeValue(v.X), v.Op.String(), analyzeValue(v.Y))
+	return nil
+}
+
+// --- helpers for future phases ---
+
+func isNullableType(t types.Type) bool {
+	switch t.(type) {
+	case *types.Pointer, *types.Interface, *types.Slice, *types.Map, *types.Chan, *types.Signature:
+		return true
 	default:
-		if namer, ok := val.(interface{ Name() string }); ok {
-			return namer.Name()
-		}
-		return "unknown"
+		return false
 	}
 }
 
-func parseExpr(s string) ir.Expr {
-	return ir.Var{Name: s}
-}
-
-func getFieldName(typ types.Type, fieldIndex int) string {
-	if ptr, ok := typ.Underlying().(*types.Pointer); ok {
-		typ = ptr.Elem().Underlying()
+func innerNullableType(t types.Type) types.Type {
+	if ptr, ok := t.(*types.Pointer); ok {
+		return ptr.Elem()
 	}
-	if strct, ok := typ.(*types.Struct); ok {
-		if fieldIndex < strct.NumFields() {
-			return strct.Field(fieldIndex).Name()
-		}
-	}
-	return fmt.Sprintf("field%d", fieldIndex)
+	return t
 }

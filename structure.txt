@@ -21,6 +21,8 @@
 │   └── tracy
 │       └── main.go
 ├── fixtures
+│   ├── options
+│   │   └── options.go
 │   └── records
 │       └── records.go
 ├── gleam.toml
@@ -31,6 +33,7 @@
 │   │   ├── analyzer.go
 │   │   └── gleam_analyzer.go
 │   ├── codegen
+│   │   └── gleam.go
 │   └── ir
 │       └── types.go
 ├── LICENSE
@@ -41,6 +44,8 @@
 │   ├── actors.gleam
 │   ├── concurrency.gleam
 │   ├── defer.gleam
+│   ├── generated_options.gleam
+│   ├── generated_records.gleam
 │   ├── interfaces.gleam
 │   ├── loops.gleam
 │   ├── manual.gleam
@@ -61,4 +66,4 @@
     ├── results_test.gleam
     └── tracy_test.gleam
 
-21 directories, 41 files
+22 directories, 45 files

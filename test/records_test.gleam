@@ -1,5 +1,7 @@
 import gleeunit/should
-import records.{Config, Person, Point, birthday, move, with_debug, with_port}
+
+//import records.{Config, Person, Point, birthday, move, with_debug, with_port}
+import generated_records
 
 pub fn point_creation_test() {
   let p = Point(x: 1.0, y: 2.0)

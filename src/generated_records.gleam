@@ -1,13 +1,13 @@
 // Generated from Go records
 
 pub type Point {
-  X: Int,
-  Y: Int,
+  X Int
+  Y Int
 }
 
 pub type Person {
-  Name: String,
-  Age: String,
+  Name String
+  Age String
 }
 
 pub fn Birthday(p: codeberg.org/shalokshalom/Tracy/fixtures/records.Person) -> codeberg.org/shalokshalom/Tracy/fixtures/records.Person {
