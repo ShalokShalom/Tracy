@@ -44,9 +44,10 @@ type Var struct {
 func (v Var) String() string { return v.Name }
 
 type BinOp struct {
-	Op   string
-	Left Expr
-	Right Expr
+	Op      string
+	Left    Expr
+	Right   Expr
+	IsFloat bool
 }
 
 func (b BinOp) String() string {
@@ -117,13 +118,12 @@ type OptionMatch struct {
 	Value       Expr
 	SomePattern string
 	SomeBody    Expr
-	OkBody      Expr
 	NoneBody    Expr
 }
 
 func (m OptionMatch) String() string {
-	return fmt.Sprintf("case %s { Some(%s) -> %s; None -> %s }",
-		m.Value, m.SomePattern, m.OkBody, m.NoneBody)
+	return fmt.Sprintf("OptionMatch(%s, Some(%s) => %s, None => %s)",
+		m.Value, m.SomePattern, m.SomeBody, m.NoneBody)
 }
 
 type ResultType struct {
@@ -166,10 +166,12 @@ func (u UseResult) String() string {
 // Functions
 
 type Func struct {
-	Name   string
-	Target string
-	Update *RecordUpdate
-	Return string
+	Name    string
+	Target  string
+	Params  []FuncParam
+	Updates []RecordUpdate
+	Body    []Expr
+	Return  string
 }
 
 type ResultFunc struct {

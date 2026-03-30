@@ -1,46 +1,48 @@
-import gleeunit/should
-
-//import records.{Config, Person, Point, birthday, move, with_debug, with_port}
 import generated_records
+import gleeunit/should
+import records.{Config, with_debug, with_port}
 
 pub fn point_creation_test() {
-  let p = Point(x: 1.0, y: 2.0)
+  let p = generated_records.Point(x: 1.0, y: 2.0)
   p.x |> should.equal(1.0)
   p.y |> should.equal(2.0)
 }
 
 pub fn move_returns_new_record_test() {
-  let p = Point(x: 0.0, y: 0.0)
-  move(p, 3.0, 4.0) |> should.equal(Point(x: 3.0, y: 4.0))
+  let p = generated_records.Point(x: 0.0, y: 0.0)
+  generated_records.move(p, 3.0, 4.0)
+  |> should.equal(generated_records.Point(x: 3.0, y: 4.0))
 }
 
 pub fn move_does_not_mutate_original_test() {
-  let p = Point(x: 1.0, y: 1.0)
-  let _ = move(p, 5.0, 5.0)
-  p |> should.equal(Point(x: 1.0, y: 1.0))
+  let p = generated_records.Point(x: 1.0, y: 1.0)
+  let _ = generated_records.move(p, 5.0, 5.0)
+  p |> should.equal(generated_records.Point(x: 1.0, y: 1.0))
 }
 
 pub fn move_negative_delta_test() {
-  let p = Point(x: 10.0, y: 10.0)
-  move(p, -3.0, -4.0) |> should.equal(Point(x: 7.0, y: 6.0))
+  let p = generated_records.Point(x: 10.0, y: 10.0)
+  generated_records.move(p, -3.0, -4.0)
+  |> should.equal(generated_records.Point(x: 7.0, y: 6.0))
 }
 
 pub fn birthday_increments_age_test() {
-  let alice = Person(name: "Alice", age: 30)
-  birthday(alice) |> should.equal(Person(name: "Alice", age: 31))
+  let alice = generated_records.Person(name: "Alice", age: 30)
+  generated_records.birthday(alice)
+  |> should.equal(generated_records.Person(name: "Alice", age: 31))
 }
 
 pub fn birthday_preserves_name_test() {
-  let bob = Person(name: "Bob", age: 25)
-  birthday(bob).name |> should.equal("Bob")
+  let bob = generated_records.Person(name: "Bob", age: 25)
+  generated_records.birthday(bob).name |> should.equal("Bob")
 }
 
 pub fn birthday_chained_test() {
-  Person(name: "Eve", age: 20)
-  |> birthday
-  |> birthday
-  |> birthday
-  |> should.equal(Person(name: "Eve", age: 23))
+  generated_records.Person(name: "Eve", age: 20)
+  |> generated_records.birthday
+  |> generated_records.birthday
+  |> generated_records.birthday
+  |> should.equal(generated_records.Person(name: "Eve", age: 23))
 }
 
 pub fn config_with_debug_test() {

@@ -25,7 +25,7 @@ type GleamField struct {
 	Type string
 }
 
-// ParseGleamFile extracts types/fns
+// ParseGleamFile extracts types/fns from a Gleam source file.
 func ParseGleamFile(path string) (map[string]GleamMember, error) {
 	members := make(map[string]GleamMember)
 	file, err := os.Open(path)
@@ -36,35 +36,60 @@ func ParseGleamFile(path string) (map[string]GleamMember, error) {
 
 	scanner := bufio.NewScanner(file)
 	var currentStruct string
-	reStruct := regexp.MustCompile(`pub\s+type\s+(\w+)\s*{`)
-	reFn := regexp.MustCompile(`pub\s+fn\s+(\w+)\s*\(`)
-	reField := regexp.MustCompile(`^\s*(\w+)\s*:\s*\w+`)
+	var braceDepth int
+
+	reStruct := regexp.MustCompile(`^pub\s+type\s+(\w+)\s*\{`)
+	reFn := regexp.MustCompile(`^pub\s+fn\s+(\w+)\s*\(`)
+	reField := regexp.MustCompile(`^\s*(\w+)\s*:\s*(.+?)\s*,?\s*$`)
 
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
 
-		// Struct
-		if match := reStruct.FindStringSubmatch(line); match != nil {
-			currentStruct = match[1]
-			members[currentStruct] = GleamMember{Name: currentStruct, Type: &GleamType{Name: currentStruct}}
-			continue
-		}
-		// End struct
-		if currentStruct != "" && strings.Contains(line, "}") {
-			currentStruct = ""
-			continue
-		}
-		// Fields
-		if currentStruct != "" {
-			if match := reField.FindStringSubmatch(line); match != nil {
-				if mem, ok := members[currentStruct]; ok && mem.Type != nil {
-					mem.Type.Fields = append(mem.Type.Fields, GleamField{Name: match[1]})
+		// Type definition start
+		if currentStruct == "" {
+			if match := reStruct.FindStringSubmatch(trimmed); match != nil {
+				currentStruct = match[1]
+				braceDepth = 1
+				members[currentStruct] = GleamMember{
+					Name: currentStruct,
+					Type: &GleamType{Name: currentStruct},
 				}
+				continue
 			}
 		}
 
-		// Fn
-		if match := reFn.FindStringSubmatch(line); match != nil {
+		// Inside a type definition — track brace depth
+		if currentStruct != "" {
+			for _, ch := range trimmed {
+				if ch == '{' {
+					braceDepth++
+				} else if ch == '}' {
+					braceDepth--
+				}
+			}
+
+			if braceDepth <= 0 {
+				currentStruct = ""
+				braceDepth = 0
+				continue
+			}
+
+			// Parse fields
+			if match := reField.FindStringSubmatch(trimmed); match != nil {
+				if mem, ok := members[currentStruct]; ok && mem.Type != nil {
+					mem.Type.Fields = append(mem.Type.Fields, GleamField{
+						Name: match[1],
+						Type: strings.TrimSpace(match[2]),
+					})
+					members[currentStruct] = mem
+				}
+			}
+			continue
+		}
+
+		// Function definition
+		if match := reFn.FindStringSubmatch(trimmed); match != nil {
 			fnName := match[1]
 			members[fnName] = GleamMember{Name: fnName}
 		}
@@ -73,7 +98,7 @@ func ParseGleamFile(path string) (map[string]GleamMember, error) {
 	return members, scanner.Err()
 }
 
-// AnalyzeGleam builds IR directly
+// AnalyzeGleam builds IR directly from a Gleam source file.
 func AnalyzeGleam(path string) (*ir.Module, error) {
 	members, err := ParseGleamFile(path)
 	if err != nil {

@@ -34,15 +34,17 @@ It will also enrich the Erlang ecosystem, and especially so our new implementati
 
 ## Roadmap
 
-**Phase 1 — Primitive types & structs** (`records.gleam`)  
+**Phase 1 — Primitive types & structs** (`records.gleam`) — *in progress*
 
-Go structs become custom types with a single variant.  
+Go structs become custom types with a single variant.
 Pointer-receiver mutation becomes a pure function returning a record update.
+*Status: The analyzer extracts struct definitions and detects record-update patterns via SSA. Codegen emits valid Gleam types and functions. Not all Go patterns are covered yet.*
 
-**Phase 2 — nil → Option(T)** (`options.gleam`)  
+**Phase 2 — nil → Option(T)** (`options.gleam`) — *planned*
 
-Every nullable Go type (`*T`, interface, slice, map, chan, func) becomes `Option(T)`.  
+Every nullable Go type (`*T`, interface, slice, map, chan, func) becomes `Option(T)`.
 Nil-checks become case expressions. Requires SSA + points-to analysis to identify which values can be nil.
+*Status: IR types and nullable-type helpers exist but are not yet wired into the analysis pipeline.*
 
 **Phase 3 — (val, err) → Result(T, E)** (`results.gleam`)  
 
