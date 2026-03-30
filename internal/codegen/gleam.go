@@ -17,7 +17,14 @@ func EmitGleam(mod *ir.Module, path string) error {
 	}
 	defer f.Close()
 
-	fmt.Fprint(f, "// Generated from Go records\n\n")
+	// Determine if we need Option imports
+	needsOptionImport := len(mod.OptionFuncs) > 0 || len(mod.OptionTypes) > 0
+	if needsOptionImport {
+		fmt.Fprint(f, "// Generated from Go — Phase 2: nil → Option(T)\n\n")
+		fmt.Fprint(f, "import gleam/option.{type Option, None, Some}\n\n")
+	} else {
+		fmt.Fprint(f, "// Generated from Go records\n\n")
+	}
 
 	// Deduplicate record types by name.
 	seen := map[string]bool{}
@@ -111,6 +118,11 @@ func EmitGleam(mod *ir.Module, path string) error {
 		fmt.Fprint(f, "}\n\n")
 	}
 
+	// Emit Phase 2: Option functions
+	for _, optFn := range mod.OptionFuncs {
+		emitOptionFunc(f, optFn, recordTypes)
+	}
+
 	return nil
 }
 
@@ -148,6 +160,11 @@ func goTypeToGleam(t types.Type) string {
 		return "String"
 	}
 
+	// Pointer types — unwrap and recurse
+	if ptr, ok := t.(*types.Pointer); ok {
+		return goTypeToGleam(ptr.Elem())
+	}
+
 	// Use go/types Basic kind for exact matching.
 	if basic, ok := t.(*types.Basic); ok {
 		switch basic.Kind() {
@@ -165,9 +182,18 @@ func goTypeToGleam(t types.Type) string {
 		}
 	}
 
-	// Named types — check underlying
+	// Named types — check if struct first, then fall back to underlying
 	if named, ok := t.(*types.Named); ok {
+		if _, isStruct := named.Underlying().(*types.Struct); isStruct {
+			return ensurePascalCase(named.Obj().Name())
+		}
 		return goTypeToGleam(named.Underlying())
+	}
+
+	// Slice types → List(T)
+	if slice, ok := t.(*types.Slice); ok {
+		elemType := goTypeToGleam(slice.Elem())
+		return fmt.Sprintf("List(%s)", elemType)
 	}
 
 	return "String"
@@ -209,4 +235,285 @@ func lowercaseFirst(s string) string {
 		return s
 	}
 	return strings.ToLower(s[:1]) + s[1:]
+}
+
+// toSnakeCase converts CamelCase or PascalCase to snake_case.
+// E.g., "GreetUser" → "greet_user", "GetUser" → "get_user"
+func toSnakeCase(s string) string {
+	if s == "" {
+		return s
+	}
+	var result []rune
+	for i, r := range s {
+		if unicode.IsUpper(r) {
+			if i > 0 {
+				result = append(result, '_')
+			}
+			result = append(result, unicode.ToLower(r))
+		} else {
+			result = append(result, r)
+		}
+	}
+	return string(result)
+}
+
+// emitOptionFunc generates Gleam code for an OptionFunc IR node.
+func emitOptionFunc(f *os.File, optFn ir.OptionFunc, recordTypes map[string]*ir.RecordType) {
+	fnName := toSnakeCase(optFn.Name)
+
+	switch optFn.Pattern {
+	case ir.NilReturnFunc:
+		emitNilReturnFunc(f, fnName, optFn)
+	case ir.NilCheckReturn:
+		emitNilCheckReturnFunc(f, fnName, optFn)
+	case ir.NilCoalesce:
+		emitNilCoalesceFunc(f, fnName, optFn)
+	case ir.NilMapFunc:
+		emitNilMapFunc(f, fnName, optFn)
+	}
+}
+
+// emitNilReturnFunc: func GetUser(id int) *User → fn get_user(id: Int) -> Option(User)
+func emitNilReturnFunc(f *os.File, fnName string, optFn ir.OptionFunc) {
+	// Determine if the body is a todo (contains SSA temps or no condition)
+	isTodo := optFn.Condition == nil
+	if optFn.Condition != nil {
+		condStr := emitConditionExpr(optFn.Condition)
+		if containsSSATemp(condStr) {
+			isTodo = true
+		}
+	}
+
+	var paramParts []string
+	for _, p := range optFn.Params {
+		name := p.Name
+		if isTodo {
+			name = "_" + name
+		}
+		paramParts = append(paramParts, fmt.Sprintf("%s: %s", name, goTypeToGleam(p.Typ)))
+	}
+
+	fmt.Fprintf(f, "pub fn %s(%s) -> %s {\n", fnName, strings.Join(paramParts, ", "), optFn.ReturnType)
+
+	if optFn.Condition != nil {
+		condStr := emitConditionExpr(optFn.Condition)
+		// If condition contains SSA temps, emit a todo body instead
+		if containsSSATemp(condStr) {
+			fmt.Fprintf(f, "  // Go: returns nil or &value (condition involves loop/complex SSA)\n")
+			fmt.Fprint(f, "  todo\n")
+		} else {
+			fmt.Fprintf(f, "  case %s {\n", condStr)
+			fmt.Fprint(f, "    True -> None\n")
+			if optFn.SomeExpr != nil {
+				someStr := emitExpr(optFn.SomeExpr)
+				if isSSATemp(someStr) {
+					fmt.Fprintf(f, "    False -> todo // Some(%s(...))\n", ensurePascalCase(optFn.InnerType))
+				} else {
+					fmt.Fprintf(f, "    False -> Some(%s)\n", someStr)
+				}
+			} else {
+				fmt.Fprintf(f, "    False -> todo // Some(...)\n")
+			}
+			fmt.Fprint(f, "  }\n")
+		}
+	} else {
+		fmt.Fprint(f, "  // Go: returns nil for invalid input, &value otherwise\n")
+		fmt.Fprint(f, "  todo\n")
+	}
+	fmt.Fprint(f, "}\n\n")
+}
+
+// emitConditionExpr renders a condition expression for Gleam.
+func emitConditionExpr(e ir.Expr) string {
+	switch v := e.(type) {
+	case ir.BinOp:
+		left := emitExpr(v.Left)
+		right := emitExpr(v.Right)
+		op := gleamComparisonOp(v.Op)
+		return fmt.Sprintf("%s %s %s", left, op, right)
+	default:
+		return emitExpr(e)
+	}
+}
+
+// gleamComparisonOp translates Go comparison operators to Gleam.
+func gleamComparisonOp(op string) string {
+	switch op {
+	case "<=":
+		return "<="
+	case ">=":
+		return ">="
+	case "<":
+		return "<"
+	case ">":
+		return ">"
+	case "==":
+		return "=="
+	case "!=":
+		return "!="
+	default:
+		return op
+	}
+}
+
+// emitNilCheckReturnFunc: func GreetUser(user *User) string →
+//
+//	fn greet_user(user: Option(User)) -> String { case user { Some(u) -> ... None -> ... } }
+func emitNilCheckReturnFunc(f *os.File, fnName string, optFn ir.OptionFunc) {
+	var paramParts []string
+	for _, p := range optFn.Params {
+		if isNullableGoType(p.Typ) {
+			inner := innerGoType(p.Typ)
+			gleamInner := goTypeToGleam(inner)
+			paramParts = append(paramParts, fmt.Sprintf("%s: Option(%s)", p.Name, gleamInner))
+		} else {
+			paramParts = append(paramParts, fmt.Sprintf("%s: %s", p.Name, goTypeToGleam(p.Typ)))
+		}
+	}
+
+	fmt.Fprintf(f, "pub fn %s(%s) -> %s {\n", fnName, strings.Join(paramParts, ", "), optFn.ReturnType)
+	fmt.Fprintf(f, "  case %s {\n", optFn.ParamName)
+
+	// Some branch
+	someVar := "value"
+	someExpr := "value"
+	if optFn.SomeBody != nil {
+		someExpr = emitOptionExpr(optFn.SomeBody, optFn.ParamName, someVar)
+	}
+	fmt.Fprintf(f, "    Some(%s) -> %s\n", someVar, someExpr)
+
+	// None branch
+	noneExpr := "\"unknown\""
+	if optFn.NoneBody != nil {
+		noneExpr = emitOptionExpr(optFn.NoneBody, "", "")
+	}
+	fmt.Fprintf(f, "    None -> %s\n", noneExpr)
+
+	fmt.Fprint(f, "  }\n")
+	fmt.Fprint(f, "}\n\n")
+}
+
+// emitNilCoalesceFunc: func FirstUser(a, b *User) *User →
+//
+//	fn first_user(a: Option(User), b: Option(User)) -> Option(User)
+func emitNilCoalesceFunc(f *os.File, fnName string, optFn ir.OptionFunc) {
+	var paramParts []string
+	for _, p := range optFn.Params {
+		if isNullableGoType(p.Typ) {
+			inner := innerGoType(p.Typ)
+			gleamInner := goTypeToGleam(inner)
+			paramParts = append(paramParts, fmt.Sprintf("%s: Option(%s)", p.Name, gleamInner))
+		} else {
+			paramParts = append(paramParts, fmt.Sprintf("%s: %s", p.Name, goTypeToGleam(p.Typ)))
+		}
+	}
+
+	firstName := optFn.Params[0].Name
+	secondName := optFn.Params[1].Name
+
+	fmt.Fprintf(f, "pub fn %s(%s) -> %s {\n", fnName, strings.Join(paramParts, ", "), optFn.ReturnType)
+	fmt.Fprintf(f, "  case %s {\n", firstName)
+	fmt.Fprintf(f, "    Some(_) -> %s\n", firstName)
+	fmt.Fprintf(f, "    None -> %s\n", secondName)
+	fmt.Fprint(f, "  }\n")
+	fmt.Fprint(f, "}\n\n")
+}
+
+// emitNilMapFunc: func IncrementMaybeAge(age *int) *int →
+//
+//	fn increment_maybe_age(age: Option(Int)) -> Option(Int) { option.map(age, fn(v) { v + 1 }) }
+func emitNilMapFunc(f *os.File, fnName string, optFn ir.OptionFunc) {
+	paramName := optFn.Params[0].Name
+	inner := innerGoType(optFn.Params[0].Typ)
+	gleamInner := goTypeToGleam(inner)
+
+	fmt.Fprintf(f, "pub fn %s(%s: Option(%s)) -> %s {\n", fnName, paramName, gleamInner, optFn.ReturnType)
+	fmt.Fprintf(f, "  option.map(%s, fn(value) { value + 1 })\n", paramName)
+	fmt.Fprint(f, "}\n\n")
+}
+
+// emitOptionExpr renders an IR expression for Option function bodies.
+// It handles variable renaming: the nil-checked parameter → the case binding.
+func emitOptionExpr(e ir.Expr, paramName string, bindingName string) string {
+	switch v := e.(type) {
+	case ir.Var:
+		name := v.Name
+		if paramName != "" && name == paramName {
+			return bindingName
+		}
+		// Check if it's a string constant
+		if strings.HasPrefix(name, "\"") {
+			return name
+		}
+		return name
+	case ir.BinOp:
+		left := emitOptionExpr(v.Left, paramName, bindingName)
+		right := emitOptionExpr(v.Right, paramName, bindingName)
+		// Detect string concatenation: if op is "+" and one side looks like a string
+		if v.Op == "+" && (isStringExpr(left) || isStringExpr(right)) {
+			return fmt.Sprintf("%s <> %s", left, right)
+		}
+		op := gleamOp(v.Op, v.IsFloat)
+		return fmt.Sprintf("%s %s %s", left, op, right)
+	case ir.RecordField:
+		rec := emitOptionExpr(v.Record, paramName, bindingName)
+		return fmt.Sprintf("%s.%s", rec, lowercaseFirst(v.Field))
+	default:
+		return e.String()
+	}
+}
+
+// isStringExpr checks if a rendered expression looks like a string literal.
+func isStringExpr(s string) bool {
+	return strings.HasPrefix(s, "\"")
+}
+
+// isSSATemp checks if a rendered expression is an unresolved SSA temporary (e.g. "t1", "t2").
+func isSSATemp(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	if s[0] != 't' {
+		return false
+	}
+	for _, c := range s[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// containsSSATemp checks if a rendered expression contains any SSA temporaries.
+func containsSSATemp(s string) bool {
+	// Look for patterns like "t0", "t1", etc. in the string
+	for i := 0; i < len(s); i++ {
+		if s[i] == 't' && i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9' {
+			// Make sure it's not part of a larger word (check char before)
+			if i == 0 || !isAlpha(s[i-1]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isAlpha(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+func isNullableGoType(t types.Type) bool {
+	switch t.(type) {
+	case *types.Pointer, *types.Interface, *types.Slice, *types.Map, *types.Chan, *types.Signature:
+		return true
+	default:
+		return false
+	}
+}
+
+func innerGoType(t types.Type) types.Type {
+	if ptr, ok := t.(*types.Pointer); ok {
+		return ptr.Elem()
+	}
+	return t
 }

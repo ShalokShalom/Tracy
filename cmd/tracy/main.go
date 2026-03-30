@@ -86,6 +86,7 @@ func analyzeGo(targetPath string) {
 			if fn, ok := member.(*ssa.Function); ok {
 				fmt.Printf(" Function: %s\n", name)
 
+				// Phase 1: Record analysis
 				irMod, err := analyze.AnalyzeFunc(fn, pkgMembers)
 				if err != nil {
 					if firstError == nil {
@@ -96,7 +97,14 @@ func analyzeGo(targetPath string) {
 				}
 
 				if irMod == nil {
-					continue
+					irMod = &ir.Module{Name: p.Pkg.Name()}
+				}
+
+				// Phase 2: Option analysis
+				optFuncs := analyze.AnalyzeFuncPhase2(fn, pkgMembers)
+				if len(optFuncs) > 0 {
+					irMod.OptionFuncs = append(irMod.OptionFuncs, optFuncs...)
+					fmt.Printf("  Phase 2: Found %d option function(s)\n", len(optFuncs))
 				}
 
 				if mod == nil {
@@ -104,6 +112,7 @@ func analyzeGo(targetPath string) {
 				} else {
 					mod.RecordTypes = append(mod.RecordTypes, irMod.RecordTypes...)
 					mod.Funcs = append(mod.Funcs, irMod.Funcs...)
+					mod.OptionFuncs = append(mod.OptionFuncs, irMod.OptionFuncs...)
 				}
 			}
 		}

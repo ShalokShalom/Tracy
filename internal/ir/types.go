@@ -16,6 +16,7 @@ type Module struct {
 	OptionTypes   []OptionType
 	ResultTypes   []ResultType
 	Funcs         []Func
+	OptionFuncs   []OptionFunc
 	OptionMatches []OptionMatch
 }
 
@@ -57,6 +58,28 @@ func (b BinOp) String() string {
 type LitInt int64
 
 func (l LitInt) String() string { return fmt.Sprintf("%d", int64(l)) }
+
+type LitString string
+
+func (l LitString) String() string { return fmt.Sprintf("%q", string(l)) }
+
+type StringConcat struct {
+	Left  Expr
+	Right Expr
+}
+
+func (s StringConcat) String() string {
+	return fmt.Sprintf("%s <> %s", s.Left, s.Right)
+}
+
+type FieldAccess struct {
+	Record Expr
+	Field  string
+}
+
+func (f FieldAccess) String() string {
+	return fmt.Sprintf("%s.%s", f.Record, f.Field)
+}
 
 type RecordValue struct {
 	Type   *RecordType
@@ -181,6 +204,36 @@ type ResultFunc struct {
 	ErrExpr      Expr
 	HasErrorChain bool
 }
+
+// OptionFunc represents a Go function translated to use Option(T).
+// Pattern determines which codegen template to use.
+type OptionFunc struct {
+	Name       string
+	Params     []FuncParam
+	ReturnType string        // Gleam return type, e.g. "Option(User)" or "String"
+	Pattern    OptionPattern
+	// For NilCheckReturn pattern:
+	ParamName    string // the parameter being nil-checked
+	SomeBody     Expr   // expression for the Some branch
+	NoneBody     Expr   // expression for the None branch
+	InnerType    string // inner type for Option, e.g. "User"
+	// For NilReturnFunc pattern:
+	Condition    Expr   // the condition that triggers None return
+	SomeExpr     Expr   // expression wrapped in Some(...)
+}
+
+type OptionPattern int
+
+const (
+	// NilReturnFunc: func returns *T, returns nil under some condition, &val otherwise
+	NilReturnFunc OptionPattern = iota
+	// NilCheckReturn: func takes *T param, nil-checks it, returns different values
+	NilCheckReturn
+	// NilCoalesce: func takes two *T, returns first non-nil (or second)
+	NilCoalesce
+	// NilMapFunc: func takes *T, returns *T, maps the inner value (like Option.map)
+	NilMapFunc
+)
 
 type FuncParam struct {
 	Name string

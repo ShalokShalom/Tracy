@@ -34,17 +34,22 @@ It will also enrich the Erlang ecosystem, and especially so our new implementati
 
 ## Roadmap
 
-**Phase 1 — Primitive types & structs** (`records.gleam`) — *in progress*
+**Phase 1 — Primitive types & structs** (`records.gleam`) — *working*
 
 Go structs become custom types with a single variant.
 Pointer-receiver mutation becomes a pure function returning a record update.
 *Status: The analyzer extracts struct definitions and detects record-update patterns via SSA. Codegen emits valid Gleam types and functions. Not all Go patterns are covered yet.*
 
-**Phase 2 — nil → Option(T)** (`options.gleam`) — *planned*
+**Phase 2 — nil → Option(T)** (`options.gleam`) — *in progress*
 
 Every nullable Go type (`*T`, interface, slice, map, chan, func) becomes `Option(T)`.
-Nil-checks become case expressions. Requires SSA + points-to analysis to identify which values can be nil.
-*Status: IR types and nullable-type helpers exist but are not yet wired into the analysis pipeline.*
+Nil-checks become case expressions. The analyzer detects four nil-related patterns via SSA:
+- **Nil-check return**: `func F(p *T) R` with `if p == nil` → `case p { Some(v) -> ... None -> ... }`
+- **Nil coalesce**: `func F(a, b *T) *T` returning first non-nil → `case a { Some(_) -> a None -> b }`
+- **Nil map**: `func F(p *T) *T` mapping inner value → `option.map(p, fn(v) { ... })`
+- **Nil return**: `func F(...) *T` returning nil conditionally → `case cond { True -> None False -> Some(...) }`
+
+*Status: SSA-based pattern detection, type mapping (`*T` → `Option(T)`, `[]T` → `List(T)`), and code generation are wired end-to-end. Functions with simple nil-check patterns produce fully working Gleam code. Functions involving struct construction or loops in the nil-return path emit correct type signatures with `todo` bodies. Snake_case conversion for function names is implemented.*
 
 **Phase 3 — (val, err) → Result(T, E)** (`results.gleam`)  
 

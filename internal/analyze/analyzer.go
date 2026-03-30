@@ -357,9 +357,7 @@ func isFloatType(t types.Type) bool {
 	return false
 }
 
-// --- helpers for future phases (Phase 2: nil → Option) ---
-// These are not yet wired into the analysis pipeline.
-// They will be used when Phase 2 adds nullable-type detection.
+// --- Phase 2: nil → Option ---
 
 func isNullableType(t types.Type) bool {
 	switch t.(type) {
@@ -375,4 +373,509 @@ func innerNullableType(t types.Type) types.Type {
 		return ptr.Elem()
 	}
 	return t
+}
+
+// AnalyzeFuncPhase2 detects nil-related patterns in Go functions and produces OptionFunc IR.
+// It identifies several patterns:
+//   - Functions returning *T that return nil in some branches → Option(T)
+//   - Functions taking *T params and nil-checking → case expression on Option
+//   - Functions taking two *T and returning first non-nil → first_some pattern
+//   - Functions mapping *T → *T via nil-check → option.map pattern
+func AnalyzeFuncPhase2(fn *ssa.Function, pkgMembers map[string]ssa.Member) []ir.OptionFunc {
+	if fn == nil || fn.Blocks == nil {
+		return nil
+	}
+
+	sig := fn.Signature
+	if sig == nil {
+		return nil
+	}
+
+	// Skip methods (receivers) for now — Phase 2 focuses on free functions
+	if sig.Recv() != nil {
+		return nil
+	}
+
+	var optFuncs []ir.OptionFunc
+
+	params := sig.Params()
+	results := sig.Results()
+
+	// Detect: function returns *T (nullable return)
+	returnsNullable := results.Len() == 1 && isNullableType(results.At(0).Type())
+	// Detect: function has nullable params
+	hasNullableParam := false
+	for i := 0; i < params.Len(); i++ {
+		if isNullableType(params.At(i).Type()) {
+			hasNullableParam = true
+			break
+		}
+	}
+
+	if !returnsNullable && !hasNullableParam {
+		return nil
+	}
+
+	// Try to classify the function pattern
+	if optFn := tryNilCheckReturn(fn, sig); optFn != nil {
+		optFuncs = append(optFuncs, *optFn)
+	} else if optFn := tryNilCoalesce(fn, sig); optFn != nil {
+		optFuncs = append(optFuncs, *optFn)
+	} else if optFn := tryNilMapFunc(fn, sig); optFn != nil {
+		optFuncs = append(optFuncs, *optFn)
+	} else if optFn := tryNilReturnFunc(fn, sig); optFn != nil {
+		optFuncs = append(optFuncs, *optFn)
+	}
+
+	return optFuncs
+}
+
+// tryNilReturnFunc detects: func F(...) *T { if cond { return nil }; return &val }
+// Maps to: fn f(...) -> Option(T) { case cond { True -> None; False -> Some(val) } }
+func tryNilReturnFunc(fn *ssa.Function, sig *types.Signature) *ir.OptionFunc {
+	results := sig.Results()
+	if results.Len() != 1 {
+		return nil
+	}
+	retType := results.At(0).Type()
+	if !isNullableType(retType) {
+		return nil
+	}
+
+	// Check if function has nil returns (return nil) and non-nil returns (return &x)
+	hasNilReturn := false
+	hasNonNilReturn := false
+
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			ret, ok := instr.(*ssa.Return)
+			if !ok || len(ret.Results) == 0 {
+				continue
+			}
+			retVal := ret.Results[0]
+			if isNilConst(retVal) {
+				hasNilReturn = true
+			} else {
+				hasNonNilReturn = true
+			}
+		}
+	}
+
+	if !hasNilReturn || !hasNonNilReturn {
+		return nil
+	}
+
+	// Check: does this function have nullable *pointer* params that are nil-checked?
+	// If so, let tryNilMapFunc or tryNilCheckReturn handle it instead.
+	// Slices/maps used as collections (not nil-checked) are OK.
+	params := sig.Params()
+	for i := 0; i < params.Len(); i++ {
+		pt := params.At(i).Type()
+		if _, isPtr := pt.(*types.Pointer); isPtr {
+			if paramIsNilChecked(fn, fn.Params[i]) {
+				return nil // let tryNilMapFunc or tryNilCheckReturn handle it
+			}
+		}
+	}
+
+	innerType := innerNullableType(retType)
+	gleamInner := goTypeToGleamStr(innerType)
+
+	// Build params
+	var irParams []ir.FuncParam
+	for i := 0; i < params.Len(); i++ {
+		irParams = append(irParams, ir.FuncParam{
+			Name: fn.Params[i].Name(),
+			Typ:  params.At(i).Type(),
+		})
+	}
+
+	// Try to extract condition and Some expression from SSA
+	condition, someExpr := extractNilReturnBranches(fn)
+
+	return &ir.OptionFunc{
+		Name:       fn.Name(),
+		Params:     irParams,
+		ReturnType: fmt.Sprintf("Option(%s)", gleamInner),
+		Pattern:    ir.NilReturnFunc,
+		InnerType:  gleamInner,
+		Condition:  condition,
+		SomeExpr:   someExpr,
+	}
+}
+
+// tryNilCheckReturn detects: func F(p *T) R { if p == nil { return X } return Y(p) }
+// Maps to: fn f(p: Option(T)) -> R { case p { Some(v) -> Y(v); None -> X } }
+func tryNilCheckReturn(fn *ssa.Function, sig *types.Signature) *ir.OptionFunc {
+	params := sig.Params()
+	results := sig.Results()
+
+	if results.Len() != 1 {
+		return nil
+	}
+
+	// Find a nullable param that is nil-checked
+	nilCheckedParam := -1
+	for i := 0; i < params.Len(); i++ {
+		if isNullableType(params.At(i).Type()) {
+			// Check if this param is nil-compared in the SSA
+			if paramIsNilChecked(fn, fn.Params[i]) {
+				nilCheckedParam = i
+				break
+			}
+		}
+	}
+
+	if nilCheckedParam < 0 {
+		return nil
+	}
+
+	// Must NOT also be a coalesce or map pattern
+	// (coalesce: all params nullable and return nullable; map: 1 nullable param, nullable return)
+	retType := results.At(0).Type()
+	if isNullableType(retType) {
+		// Could be coalesce or map — don't handle here
+		return nil
+	}
+
+	// This is a nil-check-and-return pattern like GreetUser
+	paramType := params.At(nilCheckedParam).Type()
+	innerType := innerNullableType(paramType)
+	gleamInner := goTypeToGleamStr(innerType)
+	paramName := fn.Params[nilCheckedParam].Name()
+
+	// Try to extract Some/None bodies from SSA
+	someBody, noneBody := extractNilCheckBranches(fn, fn.Params[nilCheckedParam])
+
+	var irParams []ir.FuncParam
+	for i := 0; i < params.Len(); i++ {
+		irParams = append(irParams, ir.FuncParam{
+			Name: fn.Params[i].Name(),
+			Typ:  params.At(i).Type(),
+		})
+	}
+
+	gleamReturn := goTypeToGleamStr(retType)
+
+	return &ir.OptionFunc{
+		Name:       fn.Name(),
+		Params:     irParams,
+		ReturnType: gleamReturn,
+		Pattern:    ir.NilCheckReturn,
+		ParamName:  paramName,
+		SomeBody:   someBody,
+		NoneBody:   noneBody,
+		InnerType:  gleamInner,
+	}
+}
+
+// tryNilCoalesce detects: func F(a, b *T) *T { if a != nil { return a } return b }
+// Maps to: fn f(a: Option(T), b: Option(T)) -> Option(T) { case a { Some(_) -> a; None -> b } }
+func tryNilCoalesce(fn *ssa.Function, sig *types.Signature) *ir.OptionFunc {
+	params := sig.Params()
+	results := sig.Results()
+
+	if params.Len() != 2 || results.Len() != 1 {
+		return nil
+	}
+
+	// Both params nullable, return nullable, same type
+	if !isNullableType(params.At(0).Type()) || !isNullableType(params.At(1).Type()) {
+		return nil
+	}
+	if !isNullableType(results.At(0).Type()) {
+		return nil
+	}
+
+	innerType := innerNullableType(results.At(0).Type())
+	gleamInner := goTypeToGleamStr(innerType)
+
+	var irParams []ir.FuncParam
+	for i := 0; i < params.Len(); i++ {
+		irParams = append(irParams, ir.FuncParam{
+			Name: fn.Params[i].Name(),
+			Typ:  params.At(i).Type(),
+		})
+	}
+
+	return &ir.OptionFunc{
+		Name:       fn.Name(),
+		Params:     irParams,
+		ReturnType: fmt.Sprintf("Option(%s)", gleamInner),
+		Pattern:    ir.NilCoalesce,
+		InnerType:  gleamInner,
+	}
+}
+
+// tryNilMapFunc detects: func F(p *T) *T { if p == nil { return nil } v := *p; ... return &result }
+// Maps to: fn f(p: Option(T)) -> Option(T) { option.map(p, fn(v) { ... }) }
+func tryNilMapFunc(fn *ssa.Function, sig *types.Signature) *ir.OptionFunc {
+	params := sig.Params()
+	results := sig.Results()
+
+	if results.Len() != 1 || params.Len() != 1 {
+		return nil
+	}
+
+	if !isNullableType(params.At(0).Type()) || !isNullableType(results.At(0).Type()) {
+		return nil
+	}
+
+	// Verify it nil-checks the param and returns nil in that case
+	if !paramIsNilChecked(fn, fn.Params[0]) {
+		return nil
+	}
+
+	innerType := innerNullableType(results.At(0).Type())
+	gleamInner := goTypeToGleamStr(innerType)
+	paramName := fn.Params[0].Name()
+
+	var irParams []ir.FuncParam
+	irParams = append(irParams, ir.FuncParam{
+		Name: paramName,
+		Typ:  params.At(0).Type(),
+	})
+
+	return &ir.OptionFunc{
+		Name:       fn.Name(),
+		Params:     irParams,
+		ReturnType: fmt.Sprintf("Option(%s)", gleamInner),
+		Pattern:    ir.NilMapFunc,
+		InnerType:  gleamInner,
+	}
+}
+
+// paramIsNilChecked returns true if the SSA shows a nil-comparison on the given parameter.
+func paramIsNilChecked(fn *ssa.Function, param *ssa.Parameter) bool {
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			binOp, ok := instr.(*ssa.BinOp)
+			if !ok {
+				continue
+			}
+			if binOp.Op != token.EQL && binOp.Op != token.NEQ {
+				continue
+			}
+			// Check if one operand is the param and the other is nil
+			if (binOp.X == param && isNilConst(binOp.Y)) ||
+				(binOp.Y == param && isNilConst(binOp.X)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isNilConst checks if an SSA value is the nil constant.
+func isNilConst(v ssa.Value) bool {
+	c, ok := v.(*ssa.Const)
+	if !ok {
+		return false
+	}
+	return c.Value == nil && c.IsNil()
+}
+
+// extractNilCheckBranches tries to extract the Some/None return expressions
+// from a nil-check pattern like: if p == nil { return X } return Y
+func extractNilCheckBranches(fn *ssa.Function, param *ssa.Parameter) (someBody ir.Expr, noneBody ir.Expr) {
+	// Find the If instruction that tests param == nil
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			ifInstr, ok := instr.(*ssa.If)
+			if !ok {
+				continue
+			}
+			// The condition should be a BinOp comparing param to nil
+			cond, ok := ifInstr.Cond.(*ssa.BinOp)
+			if !ok {
+				continue
+			}
+			isParamNilCheck := (cond.X == param && isNilConst(cond.Y)) ||
+				(cond.Y == param && isNilConst(cond.X))
+			if !isParamNilCheck {
+				continue
+			}
+
+			// block.Succs[0] = true branch, block.Succs[1] = false branch
+			if len(block.Succs) != 2 {
+				continue
+			}
+
+			trueBranch := block.Succs[0]
+			falseBranch := block.Succs[1]
+
+			trueRet := findReturnExpr(trueBranch, fn)
+			falseRet := findReturnExpr(falseBranch, fn)
+
+			if cond.Op == token.EQL {
+				// if param == nil: true → None body, false → Some body
+				noneBody = trueRet
+				someBody = falseRet
+			} else {
+				// if param != nil: true → Some body, false → None body
+				someBody = trueRet
+				noneBody = falseRet
+			}
+			return
+		}
+	}
+	return nil, nil
+}
+
+// findReturnExpr finds a return value expression in a block (or its successors).
+func findReturnExpr(block *ssa.BasicBlock, fn *ssa.Function) ir.Expr {
+	aliases := buildParamAliases(fn)
+	for _, instr := range block.Instrs {
+		ret, ok := instr.(*ssa.Return)
+		if !ok || len(ret.Results) == 0 {
+			continue
+		}
+		return ssaValueToExprWith(ret.Results[0], aliases)
+	}
+	// Check successors (one level deep)
+	for _, succ := range block.Succs {
+		for _, instr := range succ.Instrs {
+			ret, ok := instr.(*ssa.Return)
+			if !ok || len(ret.Results) == 0 {
+				continue
+			}
+			return ssaValueToExprWith(ret.Results[0], aliases)
+		}
+	}
+	return ir.Var{Name: "todo"}
+}
+
+// extractNilReturnBranches finds the if-condition and non-nil return expression
+// in a NilReturnFunc pattern.
+func extractNilReturnBranches(fn *ssa.Function) (condition ir.Expr, someExpr ir.Expr) {
+	aliases := buildParamAliases(fn)
+
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			ifInstr, ok := instr.(*ssa.If)
+			if !ok {
+				continue
+			}
+
+			// The condition should be a comparison
+			cond, ok := ifInstr.Cond.(*ssa.BinOp)
+			if !ok {
+				continue
+			}
+
+			if len(block.Succs) != 2 {
+				continue
+			}
+
+			condExpr := ssaValueToExprWith(cond, aliases)
+			condition = condExpr
+
+			trueBranch := block.Succs[0]
+			falseBranch := block.Succs[1]
+
+			// Find which branch returns nil and which returns a value
+			trueRet := findReturnValue(trueBranch, fn)
+			falseRet := findReturnValue(falseBranch, fn)
+
+			if trueRet != nil && isNilConst(trueRet) {
+				// True branch returns nil → false branch has the Some value
+				someExpr = findNonNilReturnExpr(falseBranch, fn, aliases)
+			} else if falseRet != nil && isNilConst(falseRet) {
+				// False branch returns nil → true branch has the Some value
+				someExpr = findNonNilReturnExpr(trueBranch, fn, aliases)
+			}
+
+			if condition != nil {
+				return
+			}
+		}
+	}
+	return nil, nil
+}
+
+// findReturnValue finds the raw SSA return value in a block.
+func findReturnValue(block *ssa.BasicBlock, fn *ssa.Function) ssa.Value {
+	for _, instr := range block.Instrs {
+		ret, ok := instr.(*ssa.Return)
+		if !ok || len(ret.Results) == 0 {
+			continue
+		}
+		return ret.Results[0]
+	}
+	// Check successors
+	for _, succ := range block.Succs {
+		for _, instr := range succ.Instrs {
+			ret, ok := instr.(*ssa.Return)
+			if !ok || len(ret.Results) == 0 {
+				continue
+			}
+			return ret.Results[0]
+		}
+	}
+	return nil
+}
+
+// findNonNilReturnExpr finds and converts the non-nil return expression to IR.
+func findNonNilReturnExpr(block *ssa.BasicBlock, fn *ssa.Function, aliases map[ssa.Value]string) ir.Expr {
+	for _, instr := range block.Instrs {
+		ret, ok := instr.(*ssa.Return)
+		if !ok || len(ret.Results) == 0 {
+			continue
+		}
+		return ssaValueToExprWith(ret.Results[0], aliases)
+	}
+	for _, succ := range block.Succs {
+		for _, instr := range succ.Instrs {
+			ret, ok := instr.(*ssa.Return)
+			if !ok || len(ret.Results) == 0 {
+				continue
+			}
+			return ssaValueToExprWith(ret.Results[0], aliases)
+		}
+	}
+	return ir.Var{Name: "todo"}
+}
+
+// goTypeToGleamStr converts a Go type to a Gleam type string.
+func goTypeToGleamStr(t types.Type) string {
+	if t == nil {
+		return "String"
+	}
+
+	// Handle pointer types → unwrap
+	if ptr, ok := t.(*types.Pointer); ok {
+		return goTypeToGleamStr(ptr.Elem())
+	}
+
+	if basic, ok := t.(*types.Basic); ok {
+		switch basic.Kind() {
+		case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
+			types.Uint, types.Uint8, types.Uint16, types.Uint32, types.Uint64:
+			return "Int"
+		case types.Float32, types.Float64:
+			return "Float"
+		case types.String:
+			return "String"
+		case types.Bool:
+			return "Bool"
+		default:
+			return "String"
+		}
+	}
+
+	if named, ok := t.(*types.Named); ok {
+		// For named struct types, return the short type name
+		name := named.Obj().Name()
+		if _, isStruct := named.Underlying().(*types.Struct); isStruct {
+			return name
+		}
+		return goTypeToGleamStr(named.Underlying())
+	}
+
+	if slice, ok := t.(*types.Slice); ok {
+		elemType := goTypeToGleamStr(slice.Elem())
+		return fmt.Sprintf("List(%s)", elemType)
+	}
+
+	return "String"
 }
